@@ -104,6 +104,32 @@ const BREAKDOWN_ORDER = [
   { key: "addedValue", label: "Added Value", noMargin: true },
 ];
 
+// The Media Planner's other, coarser breakdown — Creative / O&O / Added
+// Value / Brand Funded Content — synced onto every deal's snapshot as
+// `categoryBreakdown4`, alongside the 7-category `categoryBreakdown7` above.
+const CATEGORY4_ORDER = [
+  { key: "creative", label: "Creative" },
+  { key: "oo", label: "O&O" },
+  { key: "addedvalue", label: "Added Value", noMargin: true },
+  { key: "brandfunded", label: "Brand Funded Content" },
+];
+
+// Fixed-order categorical palette (8 hues, validated for adjacent-pair CVD
+// separation against a white chart surface — see the data-viz skill). Order
+// is assigned by category identity, never by rank/size, so a category that
+// happens to be $0 and drops out of view this time doesn't shift anyone
+// else's color next time it reappears.
+const BREAKDOWN_COLORS = {
+  talent: "#2a78d6",
+  media: "#eb6834",
+  social: "#1baf7a",
+  streaming: "#eda100",
+  linear: "#e87ba4",
+  fees: "#008300",
+  brandFunded: "#4a3aa7",
+  addedValue: "#e34948",
+};
+
 const INK = "#16211E";
 const PAPER = "#F7F6F3";
 const LINE = "#E4E0D6";
@@ -205,6 +231,25 @@ function aggregateBreakdown(deals, key) {
   let marginDollar = 0;
   for (const d of deals) {
     const cat = d?.snapshot?.categoryBreakdown7?.[key];
+    if (!cat) continue;
+    investment += num(cat.investment);
+    marginDollar += num(cat.marginDollar);
+  }
+  return {
+    investment,
+    marginDollar,
+    marginPercent: investment > 0 ? (marginDollar / investment) * 100 : null,
+  };
+}
+
+// Same idea as aggregateBreakdown above, generalized to either snapshot
+// breakdown field — used by the combined-view panel for both
+// categoryBreakdown4 and categoryBreakdown7 without duplicating the loop.
+function aggregateCategoryBreakdown(deals, snapshotField, key) {
+  let investment = 0;
+  let marginDollar = 0;
+  for (const d of deals) {
+    const cat = d?.snapshot?.[snapshotField]?.[key];
     if (!cat) continue;
     investment += num(cat.investment);
     marginDollar += num(cat.marginDollar);
@@ -988,26 +1033,90 @@ function Badge({ text, accent }) {
   );
 }
 
+// Shared renderer for a category/breakdown table — used for both the 4-category
+// Investment Category Breakdown and the 7-category Investment Breakdown Beta,
+// per-deal and (via CombinedBreakdownPanel) summed across the current view.
+function CategoryBreakdownTable({ title, order, categoryData }) {
+  const rows = order
+    .map((b) => {
+      const cat = categoryData?.[b.key];
+      const investment = num(cat?.investment);
+      const marginDollar = num(cat?.marginDollar);
+      return {
+        key: b.key,
+        label: b.label,
+        investment,
+        cost: investment - marginDollar,
+        marginDollar,
+        marginPercent: b.noMargin ? null : investment > 0 ? (marginDollar / investment) * 100 : null,
+        noMargin: !!b.noMargin,
+      };
+    })
+    .filter((r) => r.investment > 0 || r.noMargin);
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 11, fontWeight: 650, color: "#8A8378", textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 6 }}>
+        {title}
+      </div>
+      {rows.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: "#9B968A" }}>No breakdown detail on this deal.</div>
+      ) : (
+        <>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1.4fr 140px 140px 140px 90px",
+              gap: 10,
+              fontSize: 11,
+              fontWeight: 650,
+              color: "#8A8378",
+              textTransform: "uppercase",
+              letterSpacing: "0.03em",
+              padding: "4px 0 6px",
+            }}
+          >
+            <div>Breakdown</div>
+            <div style={{ textAlign: "right" }}>Investment $</div>
+            <div style={{ textAlign: "right" }}>Cost $</div>
+            <div style={{ textAlign: "right" }}>Margin $</div>
+            <div style={{ textAlign: "right" }}>Margin %</div>
+          </div>
+          {rows.map((r) => (
+            <div
+              key={r.key}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1.4fr 140px 140px 140px 90px",
+                gap: 10,
+                fontSize: 12.5,
+                padding: "4px 0",
+              }}
+            >
+              <div style={{ color: "#3A423F" }}>{r.label}</div>
+              <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoneyFull(r.investment)}</div>
+              <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#5B6B66" }}>
+                {r.noMargin ? "—" : fmtMoneyFull(r.cost)}
+              </div>
+              <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: TEAL, fontWeight: 600 }}>
+                {r.noMargin ? "—" : fmtMoneyFull(r.marginDollar)}
+              </div>
+              <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>
+                {r.noMargin ? "N/A" : fmtPercent(r.marginPercent)}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 function FlatRow({ deal, isOpen, onToggle }) {
   const investment = num(deal.total_investment);
   const cost = dealCost(deal);
   const marginDollar = dealMarginDollar(deal);
   const marginPercent = num(deal.total_margin_percent);
-
-  const breakdownRows = BREAKDOWN_ORDER.map((b) => {
-    const cat = deal?.snapshot?.categoryBreakdown7?.[b.key];
-    const catInvestment = num(cat?.investment);
-    const catMarginDollar = num(cat?.marginDollar);
-    return {
-      key: b.key,
-      label: b.label,
-      investment: catInvestment,
-      cost: catInvestment - catMarginDollar,
-      marginDollar: catMarginDollar,
-      marginPercent: b.noMargin ? null : catInvestment > 0 ? (catMarginDollar / catInvestment) * 100 : null,
-      noMargin: !!b.noMargin,
-    };
-  }).filter((r) => r.investment > 0 || r.noMargin);
 
   return (
     <>
@@ -1066,58 +1175,16 @@ function FlatRow({ deal, isOpen, onToggle }) {
 
       {isOpen && (
         <div style={{ padding: "10px 14px 14px 46px", background: "#FBFAF7", borderBottom: `1px solid ${LINE}` }}>
-          <div style={{ fontSize: 11, fontWeight: 650, color: "#8A8378", textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 6 }}>
-            Category Breakdown
-          </div>
-          {breakdownRows.length === 0 ? (
-            <div style={{ fontSize: 12.5, color: "#9B968A", marginBottom: 14 }}>No breakdown detail on this deal.</div>
-          ) : (
-            <div style={{ marginBottom: 16 }}>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1.4fr 140px 140px 140px 90px",
-                  gap: 10,
-                  fontSize: 11,
-                  fontWeight: 650,
-                  color: "#8A8378",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.03em",
-                  padding: "4px 0 6px",
-                }}
-              >
-                <div>Breakdown</div>
-                <div style={{ textAlign: "right" }}>Investment $</div>
-                <div style={{ textAlign: "right" }}>Cost $</div>
-                <div style={{ textAlign: "right" }}>Margin $</div>
-                <div style={{ textAlign: "right" }}>Margin %</div>
-              </div>
-              {breakdownRows.map((r) => (
-                <div
-                  key={r.key}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1.4fr 140px 140px 140px 90px",
-                    gap: 10,
-                    fontSize: 12.5,
-                    padding: "4px 0",
-                  }}
-                >
-                  <div style={{ color: "#3A423F" }}>{r.label}</div>
-                  <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoneyFull(r.investment)}</div>
-                  <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#5B6B66" }}>
-                    {r.noMargin ? "—" : fmtMoneyFull(r.cost)}
-                  </div>
-                  <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: TEAL, fontWeight: 600 }}>
-                    {r.noMargin ? "—" : fmtMoneyFull(r.marginDollar)}
-                  </div>
-                  <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>
-                    {r.noMargin ? "N/A" : fmtPercent(r.marginPercent)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <CategoryBreakdownTable
+            title="Investment Category Breakdown"
+            order={CATEGORY4_ORDER}
+            categoryData={deal?.snapshot?.categoryBreakdown4}
+          />
+          <CategoryBreakdownTable
+            title="Investment Breakdown Beta"
+            order={BREAKDOWN_ORDER}
+            categoryData={deal?.snapshot?.categoryBreakdown7}
+          />
 
           <PackageDrilldown deal={deal} />
         </div>
@@ -1362,6 +1429,224 @@ function FlatTable({ deals }) {
 }
 
 // ---------------------------------------------------------------------------
+// Donut chart — hand-rolled SVG, no charting library (matching this file's
+// existing no-dependency convention for icons). Slice order/colors are fixed
+// by category identity (BREAKDOWN_COLORS), not by size, so filtering the
+// deal set never repaints a surviving category's color.
+// ---------------------------------------------------------------------------
+function polarToCartesian(cx, cy, r, angleDeg) {
+  const angleRad = ((angleDeg - 90) * Math.PI) / 180;
+  return { x: cx + r * Math.cos(angleRad), y: cy + r * Math.sin(angleRad) };
+}
+
+function describeDonutSlice(cx, cy, rOuter, rInner, startAngle, endAngle) {
+  const startOuter = polarToCartesian(cx, cy, rOuter, endAngle);
+  const endOuter = polarToCartesian(cx, cy, rOuter, startAngle);
+  const startInner = polarToCartesian(cx, cy, rInner, endAngle);
+  const endInner = polarToCartesian(cx, cy, rInner, startAngle);
+  const largeArc = endAngle - startAngle <= 180 ? 0 : 1;
+  return [
+    `M ${startOuter.x} ${startOuter.y}`,
+    `A ${rOuter} ${rOuter} 0 ${largeArc} 0 ${endOuter.x} ${endOuter.y}`,
+    `L ${endInner.x} ${endInner.y}`,
+    `A ${rInner} ${rInner} 0 ${largeArc} 1 ${startInner.x} ${startInner.y}`,
+    "Z",
+  ].join(" ");
+}
+
+// Picks readable label ink for a given wedge fill (white on darker/saturated
+// hues, ink on the lighter ones) — labels never inherit the series color itself.
+function textColorForFill(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? INK : "#FFFFFF";
+}
+
+// Only large-enough slices get a direct label inside the ring — smaller ones
+// rely on the legend and the native SVG tooltip (<title>) instead of
+// crowding the chart with unreadable text (dataviz skill: "label
+// selectively, never a number on every point").
+const DONUT_LABEL_THRESHOLD_PCT = 8;
+
+function InvestmentDonut({ rows, colors, size = 190 }) {
+  const total = rows.reduce((s, r) => s + r.investment, 0);
+  if (total <= 0) return null;
+
+  const cx = size / 2;
+  const cy = size / 2;
+  const rOuter = size / 2 - 4;
+  const rInner = rOuter * 0.58;
+
+  let cursor = 0;
+  const slices = rows.map((r) => {
+    const pct = (r.investment / total) * 100;
+    const startAngle = (cursor / total) * 360;
+    cursor += r.investment;
+    const endAngle = (cursor / total) * 360;
+    const midAngle = (startAngle + endAngle) / 2;
+    const labelPos = polarToCartesian(cx, cy, (rOuter + rInner) / 2, midAngle);
+    return { ...r, pct, startAngle, endAngle, labelPos, fill: colors[r.key] || "#9B968A" };
+  });
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
+      <svg width={size} height={size} role="img" aria-label="Investment breakdown by category, as a percent of total investment">
+        {slices.map((s) => (
+          <path
+            key={s.key}
+            d={describeDonutSlice(cx, cy, rOuter, rInner, s.startAngle, s.endAngle)}
+            fill={s.fill}
+            stroke="#FFFFFF"
+            strokeWidth={3}
+          >
+            <title>{`${s.label}: ${fmtMoneyFull(s.investment)} (${s.pct.toFixed(1)}%)`}</title>
+          </path>
+        ))}
+        {slices
+          .filter((s) => s.pct >= DONUT_LABEL_THRESHOLD_PCT)
+          .map((s) => (
+            <text
+              key={`label-${s.key}`}
+              x={s.labelPos.x}
+              y={s.labelPos.y}
+              textAnchor="middle"
+              dominantBaseline="central"
+              style={{ fontSize: 12, fontWeight: 650, fill: textColorForFill(s.fill), pointerEvents: "none" }}
+            >
+              {`${s.pct.toFixed(0)}%`}
+            </text>
+          ))}
+        <text x={cx} y={cy - 8} textAnchor="middle" style={{ fontSize: 10, fontWeight: 650, fill: "#8A8378", letterSpacing: "0.03em" }}>
+          TOTAL
+        </text>
+        <text x={cx} y={cy + 13} textAnchor="middle" style={{ fontSize: 15, fontWeight: 700, fill: INK }}>
+          {fmtMoney(total)}
+        </text>
+      </svg>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {slices.map((s) => (
+          <div key={`legend-${s.key}`} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: s.fill, flexShrink: 0 }} />
+            <span style={{ color: "#3A423F", fontWeight: 600 }}>{s.label}</span>
+            <span style={{ color: "#8A8378" }}>{s.pct.toFixed(1)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Combined breakdown panel — both category tables summed across whatever's
+// currently in view (i.e. respecting the active Type/Show/Brand/Agency
+// filters), rather than a manual per-deal selection. "The user's view" here
+// means the filtered set, since that's already how every other rollup on
+// this dashboard (the stat strip, the Tree view) treats "in view."
+// ---------------------------------------------------------------------------
+function CombinedBreakdownTable({ title, order, deals, snapshotField, colors }) {
+  const rows = order
+    .map((b) => {
+      const agg = aggregateCategoryBreakdown(deals, snapshotField, b.key);
+      return {
+        key: b.key,
+        label: b.label,
+        investment: agg.investment,
+        cost: agg.investment - agg.marginDollar,
+        marginDollar: agg.marginDollar,
+        marginPercent: b.noMargin ? null : agg.marginPercent,
+        noMargin: !!b.noMargin,
+      };
+    })
+    .filter((r) => r.investment > 0 || r.noMargin);
+
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ fontSize: 12, fontWeight: 650, color: TEAL, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 8 }}>
+        {title}
+      </div>
+      {colors && rows.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <InvestmentDonut rows={rows} colors={colors} />
+        </div>
+      )}
+      {rows.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: "#9B968A" }}>No deals in the current view have breakdown detail.</div>
+      ) : (
+        <div style={{ border: `1px solid ${LINE}`, borderRadius: 8, overflow: "hidden", background: "#FFFFFF" }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1.4fr 150px 150px 150px 100px",
+              gap: 10,
+              padding: "7px 12px",
+              background: "#EFEDE5",
+              fontSize: 10.5,
+              fontWeight: 650,
+              color: "#5B6B66",
+              textTransform: "uppercase",
+              letterSpacing: "0.03em",
+            }}
+          >
+            <div>Category</div>
+            <div style={{ textAlign: "right" }}>Investment $</div>
+            <div style={{ textAlign: "right" }}>Cost $</div>
+            <div style={{ textAlign: "right" }}>Margin $</div>
+            <div style={{ textAlign: "right" }}>Margin %</div>
+          </div>
+          {rows.map((r, i) => (
+            <div
+              key={r.key}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1.4fr 150px 150px 150px 100px",
+                gap: 10,
+                padding: "7px 12px",
+                fontSize: 12.5,
+                borderTop: i > 0 ? `1px solid ${LINE}` : "none",
+              }}
+            >
+              <div style={{ fontWeight: 600, color: "#3A423F" }}>{r.label}</div>
+              <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtMoneyFull(r.investment)}</div>
+              <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "#5B6B66" }}>
+                {r.noMargin ? "—" : fmtMoneyFull(r.cost)}
+              </div>
+              <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: TEAL, fontWeight: 600 }}>
+                {r.noMargin ? "—" : fmtMoneyFull(r.marginDollar)}
+              </div>
+              <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>
+                {r.noMargin ? "N/A" : fmtPercent(r.marginPercent)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CombinedBreakdownPanel({ deals }) {
+  return (
+    <div style={{ border: `1px solid ${LINE}`, borderRadius: 10, background: "#FBFAF7", padding: "16px 16px 4px", marginBottom: 20 }}>
+      <CombinedBreakdownTable
+        title="Investment Category Breakdown (Combined)"
+        order={CATEGORY4_ORDER}
+        deals={deals}
+        snapshotField="categoryBreakdown4"
+      />
+      <CombinedBreakdownTable
+        title="Investment Breakdown Beta (Combined)"
+        order={BREAKDOWN_ORDER}
+        deals={deals}
+        snapshotField="categoryBreakdown7"
+        colors={BREAKDOWN_COLORS}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 function ExecSummaryDashboard() {
@@ -1371,6 +1656,7 @@ function ExecSummaryDashboard() {
   const [lastSynced, setLastSynced] = useState(null);
   const [expanded, setExpanded] = useState(new Set());
   const [view, setView] = useState("table"); // "table" | "tree"
+  const [showCombined, setShowCombined] = useState(false);
   const [filters, setFilters] = useState({
     type: new Set(),
     status: new Set(),
@@ -1511,6 +1797,26 @@ function ExecSummaryDashboard() {
             </div>
           ))}
         </div>
+
+        {/* Combined category breakdown toggle */}
+        {status === "ready" && deals.length > 0 && (
+          <div style={{ marginBottom: 14 }}>
+            <button
+              className="ctrl"
+              onClick={() => setShowCombined((v) => !v)}
+              style={{
+                ...ctrlBtnStyle,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              {showCombined ? <ChevronDown size={13} strokeWidth={2.25} /> : <ChevronRight size={13} strokeWidth={2.25} />}
+              {showCombined ? "Hide" : "Show"} Investment Category Breakdown (Combined)
+            </button>
+            {showCombined && <div style={{ marginTop: 12 }}><CombinedBreakdownPanel deals={filteredDeals} /></div>}
+          </div>
+        )}
 
         {/* View tabs + controls */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
